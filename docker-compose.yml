@@ -1,0 +1,18 @@
+# PostgreSQL para la agenda de NOCTA.
+# Uso: `docker compose up -d` → crea la BD "app_db" en 127.0.0.1:5432
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nocta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - nocta_pgdata:/var/lib/postgresql/data
+
+volumes:
+  nocta_pgdata:
