@@ -57,7 +57,23 @@ async function generateWithOpenAI(
   promptEnriquecido: string
 ): Promise<{ imgs: string[]; error: string }> {
   let error = "";
-  const llamar = async (n: number) => {
+
+  /* gpt-image-1 devuelve URLs temporales (output_format png/jpeg/webp).
+     Las descargamos y convertimos a data URL para que todo siga local. */
+  const descargar = async (url: string): Promise<string | null> => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(40000) });
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return `data:image/png;base64,${buf.toString("base64")}`;
+    } catch {
+      return null;
+    }
+  };
+
+  /* 3 llamadas en paralelo de n=1 (garantiza las 3 variantes; gpt-image-1
+     puede rechazar n>1 según quality) */
+  const llamarUno = async (): Promise<{ url?: string; b64?: string }> => {
     const r = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: {
@@ -67,61 +83,35 @@ async function generateWithOpenAI(
       body: JSON.stringify({
         model: "gpt-image-1",
         prompt: promptEnriquecido,
-        n,
+        n: 1,
         size: "1024x1024",
         quality: "low",
         output_format: "png",
       }),
-      signal: AbortSignal.timeout(55000),
+      signal: AbortSignal.timeout(60000),
     });
     if (!r.ok) {
       const texto = await r.text().catch(() => "");
       error = `HTTP ${r.status}: ${texto.slice(0, 300)}`;
-      console.error(`[simulador/openai] n=${n} falló: ${error}`);
-      return null;
+      console.error(`[simulador/openai] falló: ${error}`);
+      return {};
     }
-    return (await r.json()) as { data?: { url?: string; b64_json?: string }[] };
+    const j = (await r.json()) as { data?: { url?: string; b64_json?: string }[] };
+    const item = j.data?.[0];
+    return { url: item?.url, b64: item?.b64_json };
   };
 
-  /* gpt-image-1 devuelve URLs temporales (output_format png/jpeg/webp).
-     Las descargamos y convertimos a data URL para que todo siga local. */
-  const descargar = async (url: string): Promise<string | null> => {
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
-      if (!r.ok) return null;
-      const buf = Buffer.from(await r.arrayBuffer());
-      return `data:image/png;base64,${buf.toString("base64")}`;
-    } catch {
-      return null;
+  const resultados = await Promise.all([llamarUno(), llamarUno(), llamarUno()]);
+  const imgs: string[] = [];
+  for (const r of resultados) {
+    if (typeof r.b64 === "string") {
+      imgs.push(`data:image/png;base64,${r.b64}`);
+    } else if (typeof r.url === "string") {
+      const d = await descargar(r.url);
+      if (d) imgs.push(d);
     }
-  };
-
-  const json = await llamar(3);
-  if (json) {
-    const imgs: string[] = [];
-    for (const item of json.data ?? []) {
-      const fuente = item.url ?? item.b64_json;
-      if (typeof item.b64_json === "string") {
-        imgs.push(`data:image/png;base64,${item.b64_json}`);
-      } else if (typeof item.url === "string") {
-        const descargada = await descargar(item.url);
-        if (descargada) imgs.push(descargada);
-      }
-      void fuente;
-    }
-    if (imgs.length) return { imgs, error: "" };
   }
-  const single = await llamar(1);
-  const url1 = single?.data?.[0]?.url;
-  const b64 = single?.data?.[0]?.b64_json;
-  if (typeof b64 === "string") {
-    return { imgs: [`data:image/png;base64,${b64}`], error: "" };
-  }
-  if (typeof url1 === "string") {
-    const descargada = await descargar(url1);
-    if (descargada) return { imgs: [descargada], error: "" };
-  }
-  return { imgs: [], error };
+  return { imgs, error };
 }
 
 /* ---------- Replicate: 3 variaciones en paralelo ---------- */
