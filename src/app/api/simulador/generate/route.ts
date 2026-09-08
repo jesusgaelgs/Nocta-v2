@@ -70,7 +70,7 @@ async function generateWithOpenAI(
         n,
         size: "1024x1024",
         quality: "low",
-        output_format: "b64_json",
+        output_format: "png",
       }),
       signal: AbortSignal.timeout(55000),
     });
@@ -80,23 +80,46 @@ async function generateWithOpenAI(
       console.error(`[simulador/openai] n=${n} falló: ${error}`);
       return null;
     }
-    return (await r.json()) as { data?: { b64_json?: string }[] };
+    return (await r.json()) as { data?: { url?: string; b64_json?: string }[] };
+  };
+
+  /* gpt-image-1 devuelve URLs temporales (output_format png/jpeg/webp).
+     Las descargamos y convertimos a data URL para que todo siga local. */
+  const descargar = async (url: string): Promise<string | null> => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return `data:image/png;base64,${buf.toString("base64")}`;
+    } catch {
+      return null;
+    }
   };
 
   const json = await llamar(3);
   if (json) {
     const imgs: string[] = [];
     for (const item of json.data ?? []) {
+      const fuente = item.url ?? item.b64_json;
       if (typeof item.b64_json === "string") {
         imgs.push(`data:image/png;base64,${item.b64_json}`);
+      } else if (typeof item.url === "string") {
+        const descargada = await descargar(item.url);
+        if (descargada) imgs.push(descargada);
       }
+      void fuente;
     }
     if (imgs.length) return { imgs, error: "" };
   }
   const single = await llamar(1);
+  const url1 = single?.data?.[0]?.url;
   const b64 = single?.data?.[0]?.b64_json;
   if (typeof b64 === "string") {
     return { imgs: [`data:image/png;base64,${b64}`], error: "" };
+  }
+  if (typeof url1 === "string") {
+    const descargada = await descargar(url1);
+    if (descargada) return { imgs: [descargada], error: "" };
   }
   return { imgs: [], error };
 }
