@@ -6,6 +6,63 @@ IA) se ponga al día en minutos y respete lo ya construido.
 
 ---
 
+## v1.9 — Presupuesto global $7 + botón "Descargar" eliminado (2026-09-08)
+
+**Contexto:** la página se compartió en un grupo y el saldo de OpenAI bajó
+~$0.50 rápido (el límite por usuario de v1.8 aún no estaba desplegado).
+Además, usuarios reportaron un botón "Descargar PNG" que no descargaba.
+
+**Cambios:**
+1. **Presupuesto global mensual** (`AI_MONTHLY_BUDGET_USD`, default **7**):
+   - Contador en código: generaciones IA del mes × costo estimado
+     conservador ($0.09 por generación de 3 imágenes).
+   - Al alcanzarlo, la IA se apaga y el simulador cae a la colección
+     (gratis) automáticamente. Log de advertencia.
+   - Dato honesto: el corte REAL e infalible es el **hard limit de OpenAI**
+     (Settings → Usage → Limits → $7/mes) — cuando OpenAI lo alcanza
+     responde 429 y el sistema ya sabe caer a colección sin romperse.
+2. **Botón "⤓ Descargar PNG" eliminado** del simulador (no funcionaba de
+   forma fiable en navegadores). Queda un solo CTA: "Agendar con esta idea →".
+3. Tres candados activos para proteger el costo:
+   - `AI_USER_DAILY_LIMIT=3` por usuario (cookie + hash IP).
+   - `AI_MONTHLY_LIMIT=100` generaciones/mes.
+   - `AI_MONTHLY_BUDGET_USD=7` presupuesto en USD/mes.
+
+---
+
+## v1.8 — Límite de 3 ideas IA por usuario/día (protección de costo) (2026-09-08)
+
+**Decisión de producto:** máximo 3 generaciones IA por visitante al día. El
+costo de la IA lo absorbe el artista (nunca el cliente), así que el límite
+protege su bolsillo sin que el cliente vea jamás "créditos" ni contadores.
+
+**Identidad sin fricción (no hay login, por filosofía del producto):**
+- Cookie anónima `nocta_uid` (30 días) como identidad principal.
+- Hash SHA-256 de la IP (`x-forwarded-for`) como respaldo si se borra la
+  cookie. No se almacenan IPs crudas (privacidad).
+- Honestidad técnica: no es anti-fraude perfecto (eso exigiría login), pero
+  detiene el abuso casual que dispara el costo.
+
+**Comportamiento:**
+- El límite (default 3, configurable `AI_USER_DAILY_LIMIT`) es **rodante 24 h**.
+- La colección local (gratis) SIEMPRE está disponible: la magia no se rompe.
+- Al agotar sus 3 ideas, el cliente ve un mensaje de **conversión**:
+  "¿Te gustó alguna? Llévala al estudio → Agendar cita" — el límite se usa
+  como empujón final del embudo, no como freno.
+- Aviso sutil de "te quedan X ideas IA hoy" antes de agotarse.
+
+**Técnica:**
+- `src/lib/simulador/limits.ts`: identidad + conteo 24 h + registro.
+- Columna `uid` en la tabla `generaciones` (auto-migración).
+- La API devuelve `restante` y `limiteAlcanzado` al frontend.
+
+**Fix IA incluido (descubierto en pruebas):** gpt-image-1 ya no acepta
+`output_format: "b64_json"` (HTTP 400) → ahora pide `png` y descarga las URLs
+temporales a base64. Las 3 variantes se piden en 3 llamadas paralelas n=1
+(calidad low) para garantizar que las 3 lleguen.
+
+---
+
 ## v1.7 — IA real en el simulador: OpenAI + 3 variantes + cuota + métricas (2026-09-08)
 
 **Decisiones tomadas con el propietario:**

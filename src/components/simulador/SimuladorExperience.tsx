@@ -74,6 +74,8 @@ export function SimuladorExperience() {
   const [design, setDesign] = useState<DesignState | null>(null);
   const [variantes, setVariantes] = useState<DesignState[]>([]);
   const [error, setError] = useState("");
+  const [restante, setRestante] = useState<number | null>(null);
+  const [limiteAlcanzado, setLimiteAlcanzado] = useState(false);
   const [transform, setTransform] = useState<Transform>({
     x: 0,
     y: 0,
@@ -219,6 +221,8 @@ export function SimuladorExperience() {
         const data = (await resp.json()) as {
           designs?: { data: string; name: string }[];
           source?: "ia" | "colección";
+          restante?: number;
+          limiteAlcanzado?: boolean;
         };
         const lista = data.designs ?? [];
         if (!lista.length) throw new Error("Respuesta vacía del generador.");
@@ -234,6 +238,8 @@ export function SimuladorExperience() {
         /* Si solo hay una, va directo al lienzo; si hay varias, se elige */
         setDesign(estados[0]);
         setTransform((t) => ({ ...t, x: 0, y: 0, scale: 1, rot: 0 }));
+        if (typeof data.restante === "number") setRestante(data.restante);
+        if (data.limiteAlcanzado) setLimiteAlcanzado(true);
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Algo falló al generar el diseño."
@@ -301,17 +307,6 @@ export function SimuladorExperience() {
     pinchRef.current.delete(e.pointerId);
     if (pinchRef.current.size < 2) pinchStartRef.current = null;
     if (dragRef.current?.id === e.pointerId) dragRef.current = null;
-  };
-
-  /* ---------- Descarga ---------- */
-  const download = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const url = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "nocta-simulacion.png";
-    a.click();
   };
 
   const clearPhoto = () => {
@@ -492,6 +487,46 @@ export function SimuladorExperience() {
                   Sorpréndeme ✦
                 </button>
               </div>
+
+              {/* Límite diario: aviso sutil de cuántas ideas IA quedan */}
+              {restante !== null && !limiteAlcanzado && restante <= 3 && (
+                <p className="mt-3 text-[11px] leading-relaxed text-neutral-500">
+                  ✦ Te quedan{" "}
+                  <span className="font-semibold text-neutral-300">
+                    {restante} {restante === 1 ? "idea" : "ideas"} IA
+                  </span>{" "}
+                  para explorar hoy. Después, seguimos con la colección.
+                </p>
+              )}
+
+              {/* Límite alcanzado: en vez de frenar, empujamos al estudio */}
+              {limiteAlcanzado && (
+                <div className="mt-3 rounded-2xl border border-neutral-700 bg-neutral-900/60 p-4">
+                  <p className="text-sm font-semibold leading-snug text-white">
+                    ¿Te gustó alguna de tus ideas? ✦
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-neutral-400">
+                    Ya exploraste 3 ideas hoy. Llévala al estudio: Valentina la
+                    interpreta, ajusta y la convierte en tu tatuaje.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <Link
+                      href="/agenda"
+                      className="rounded-full bg-white px-4 py-2 text-xs font-bold text-black transition hover:bg-neutral-200"
+                    >
+                      Agendar cita →
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => void generate(prompt)}
+                      className="rounded-full border border-neutral-600 px-4 py-2 text-xs font-semibold text-neutral-300 transition hover:border-white"
+                    >
+                      Seguir con la colección
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
 
               <p className="mb-3 mt-8 text-[11px] font-semibold uppercase tracking-[0.3em] text-neutral-500">
@@ -664,18 +699,11 @@ export function SimuladorExperience() {
                 <div className="ml-auto flex gap-2">
                   <button
                     type="button"
-                    onClick={download}
-                    disabled={!design}
-                    className="rounded-full bg-white px-5 py-2.5 text-xs font-bold text-black transition hover:bg-neutral-200 disabled:opacity-30"
-                  >
-                    ⤓ Descargar PNG
-                  </button>
-                  <button
-                    type="button"
                     onClick={guardarYAgendar}
-                    className="rounded-full border border-white px-5 py-2.5 text-xs font-bold uppercase tracking-widest transition hover:bg-white hover:text-black"
+                    disabled={!design}
+                    className="rounded-full bg-white px-5 py-2.5 text-xs font-bold uppercase tracking-widest text-black transition hover:bg-neutral-200 disabled:opacity-30"
                   >
-                    Agendar
+                    Agendar con esta idea →
                   </button>
                 </div>
               </div>

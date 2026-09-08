@@ -54,12 +54,14 @@ export const notas = pgTable("notas", {
 
 /**
  * Generaciones de IA del simulador. Cada fila = un prompt generado
- * (con sus variaciones). Sirve para la cuota mensual y las métricas.
+ * (con sus variaciones). Sirve para la cuota mensual, el límite por
+ * usuario (cookie anónima `nocta_uid` o hash de IP) y las métricas.
  */
 export const generaciones = pgTable("generaciones", {
   id: serial("id").primaryKey(),
   prompt: text("prompt").notNull(),
   variantes: integer("variantes").notNull(),
+  uid: varchar("uid", { length: 64 }),
   creadoEn: timestamp("creado_en", { withTimezone: true })
     .notNull()
     .defaultNow(),

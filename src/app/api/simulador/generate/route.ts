@@ -6,6 +6,14 @@ import { db } from "@/db";
 import { generaciones } from "@/db/schema";
 import { ensureSchema } from "@/db/ensure-schema";
 import { matchDesign } from "@/lib/simulador/designs";
+import {
+  LIMITE_POR_USUARIO,
+  UID_COOKIE,
+  generarUid,
+  hashIp,
+  registrarGeneracion,
+  usadasUltimas24h,
+} from "@/lib/simulador/limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -160,32 +168,54 @@ async function generateWithReplicate(
   return res.filter((r): r is string => r !== null);
 }
 
-/* ---------- Cuota mensual ---------- */
-async function bajoCuota(): Promise<boolean> {
-  if (!process.env.OPENAI_API_KEY && !process.env.REPLICATE_API_TOKEN) return false;
-  const limite = Number(process.env.AI_MONTHLY_LIMIT ?? "100");
-  if (!Number.isFinite(limite) || limite <= 0) return true;
+/* ---------- Presupuesto global (protección de gasto) ----------
+   Costo estimado conservador por generación IA (3 imágenes, gpt-image-1
+   low). El presupuesto mensual real lo impone OpenAI (hard limit); este
+   contador es la segunda barrera en código antes de llegar a él. */
+const COSTO_ESTIMADO_POR_GENERACION = 0.09; // USD, conservador
+const PRESUPUESTO_MENSUAL_USD = Number(process.env.AI_MONTHLY_BUDGET_USD ?? "7");
+const AI_MONTHLY_LIMIT = Number(process.env.AI_MONTHLY_LIMIT ?? "100");
+
+async function presupuestoDisponible(): Promise<{ ok: boolean; razon: string }> {
+  if (!process.env.OPENAI_API_KEY && !process.env.REPLICATE_API_TOKEN) {
+    return { ok: false, razon: "sin motor" };
+  }
   try {
-    await ensureSchema();
     const [row] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(generaciones)
-      .where(
-        sql`creado_en >= date_trunc('month', now())`
-      );
-    return (row?.n ?? 0) < limite;
+      .where(sql`creado_en >= date_trunc('month', now())`);
+    const usadas = row?.n ?? 0;
+    const gastoEstimado = usadas * COSTO_ESTIMADO_POR_GENERACION;
+    if (gastoEstimado >= PRESUPUESTO_MENSUAL_USD) {
+      return {
+        ok: false,
+        razon: `presupuesto mensual alcanzado (~$${gastoEstimado.toFixed(2)} de $${PRESUPUESTO_MENSUAL_USD})`,
+      };
+    }
+    if (usadas >= AI_MONTHLY_LIMIT) {
+      return { ok: false, razon: `tope de ${AI_MONTHLY_LIMIT} generaciones del mes alcanzado` };
+    }
+    return { ok: true, razon: "" };
   } catch {
-    return true; // ante fallo de BD, no bloquear la experiencia
+    return { ok: true, razon: "" }; // ante fallo de BD, no bloquear
   }
 }
 
-async function registrar(prompt: string, variantes: number) {
-  try {
-    await ensureSchema();
-    await db.insert(generaciones).values({ prompt, variantes });
-  } catch (e) {
-    console.error("[simulador] no se pudo registrar la generación:", e);
+/* ---------- Identidad del usuario (cookie anónima + hash de IP) ---------- */
+function identidadUsuario(req: NextRequest): {
+  uid: string;
+  nuevaCookie: string | null;
+} {
+  const cookie = req.cookies.get(UID_COOKIE)?.value ?? "";
+  if (cookie && cookie.startsWith("u:")) {
+    return { uid: cookie, nuevaCookie: null };
   }
+  /* Sin cookie: usamos hash de IP como identidad y emitimos cookie nueva */
+  const ip = req.headers.get("x-forwarded-for") ?? null;
+  const porIp = hashIp(ip);
+  const nuevo = generarUid();
+  return { uid: porIp ?? nuevo, nuevaCookie: nuevo };
 }
 
 export async function POST(req: NextRequest) {
@@ -200,8 +230,21 @@ export async function POST(req: NextRequest) {
   let variantes: string[] = [];
   let source: "ia" | "colección" = "colección";
   let iaError = "";
+  let limiteAlcanzado = false;
 
-  if (await bajoCuota()) {
+  const { uid, nuevaCookie } = identidadUsuario(req);
+  const usadas = await usadasUltimas24h(uid);
+
+  /* ¿Hay motor de IA disponible y el usuario tiene ideas disponibles?
+     Tres candados: límite por usuario (3/día), tope de generaciones del
+     mes y presupuesto global en USD (default $7). */
+  const hayMotor = Boolean(
+    process.env.OPENAI_API_KEY || process.env.REPLICATE_API_TOKEN
+  );
+  const puedeGenerarIA = usadas < LIMITE_POR_USUARIO;
+  const presupuesto = await presupuestoDisponible();
+
+  if (hayMotor && puedeGenerarIA && presupuesto.ok) {
     /* 1) OpenAI (decisión del usuario) */
     const openaiKey = process.env.OPENAI_API_KEY;
     if (openaiKey) {
@@ -230,9 +273,15 @@ export async function POST(req: NextRequest) {
       }
       if (variantes.length) source = "ia";
     }
+  } else if (hayMotor) {
+    limiteAlcanzado = true;
+    iaError = presupuesto.ok
+      ? "límite diario por usuario alcanzado (protección de costo)"
+      : `protección de gasto activa: ${presupuesto.razon}`;
+    console.warn(`[simulador] IA bloqueada: ${iaError}`);
   }
 
-  /* 3) Colección local */
+  /* 3) Colección local (siempre disponible, gratis — la magia no se rompe) */
   let name = prompt || "Tu idea";
   if (!variantes.length) {
     const matched = matchDesign(prompt);
@@ -240,19 +289,33 @@ export async function POST(req: NextRequest) {
     name = matched.name;
     source = "colección";
   } else {
-    await registrar(prompt || "(idea libre)", variantes.length);
+    await registrarGeneracion(prompt || "(idea libre)", variantes.length, uid);
   }
 
-  return NextResponse.json({
+  const restante = Math.max(0, LIMITE_POR_USUARIO - (source === "ia" ? usadas + 1 : usadas));
+
+  const res = NextResponse.json({
     designs: variantes.map((data, i) => ({
       data,
       name: variantes.length > 1 ? `${name} — variante ${i + 1}` : name,
     })),
     source,
     variantes: variantes.length,
-    /* Solo para diagnóstico: describe por qué se usó la colección */
-    ...(source === "colección" && process.env.OPENAI_API_KEY
-      ? { iaError: iaError || "cuota mensual alcanzada o clave ausente" }
-      : {}),
+    restante,
+    limiteAlcanzado,
+    /* Solo para diagnóstico interno (no se muestra al cliente) */
+    ...(source === "colección" && hayMotor ? { iaError } : {}),
   });
+
+  /* Cookie anónima de identidad (30 días) */
+  if (nuevaCookie) {
+    res.cookies.set(UID_COOKIE, nuevaCookie, {
+      httpOnly: false,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    });
+  }
+  return res;
 }

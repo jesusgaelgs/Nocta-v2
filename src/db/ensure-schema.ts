@@ -60,6 +60,9 @@ export async function ensureSchema(): Promise<void> {
         creado_en timestamptz NOT NULL DEFAULT now()
       )
     `);
+    await pool.query(
+      `ALTER TABLE generaciones ADD COLUMN IF NOT EXISTS uid varchar(64)`
+    );
 
     done = true;
   } catch (e) {
