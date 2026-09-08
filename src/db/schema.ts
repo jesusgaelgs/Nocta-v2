@@ -1,5 +1,6 @@
 import {
   boolean,
+  integer,
   pgTable,
   serial,
   text,
@@ -46,6 +47,19 @@ export const notas = pgTable("notas", {
   id: serial("id").primaryKey(),
   texto: text("texto").notNull(),
   hecho: boolean("hecho").notNull().default(false),
+  creadoEn: timestamp("creado_en", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * Generaciones de IA del simulador. Cada fila = un prompt generado
+ * (con sus variaciones). Sirve para la cuota mensual y las métricas.
+ */
+export const generaciones = pgTable("generaciones", {
+  id: serial("id").primaryKey(),
+  prompt: text("prompt").notNull(),
+  variantes: integer("variantes").notNull(),
   creadoEn: timestamp("creado_en", { withTimezone: true })
     .notNull()
     .defaultNow(),

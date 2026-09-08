@@ -6,6 +6,37 @@ IA) se ponga al día en minutos y respete lo ya construido.
 
 ---
 
+## v1.7 — IA real en el simulador: OpenAI + 3 variantes + cuota + métricas (2026-09-08)
+
+**Decisiones tomadas con el propietario:**
+- Motor principal: **OpenAI gpt-image-1** (el costo lo absorbe el artista).
+- **3 variaciones por prompt** — el cliente elige su favorita.
+- **Cuota de seguridad mensual** (`AI_MONTHLY_LIMIT`, default 100): si el sitio
+  se vuelve viral, el costo nunca se dispara. El cliente NUNCA ve contadores.
+
+**Backend (`POST /api/simulador/generate`):**
+- Ahora devuelve `{ designs: [{data, name}], source, variantes }`.
+- Motor: OpenAI (3 variantes en una llamada, fallback a n=1) → Replicate
+  flux-schnell como respaldo → colección local (matcher léxico).
+- **Mejorador de prompt** por plantilla + estilos: fine-line, blackwork,
+  ornamental, old school, minimal, japonesa.
+- Registro de uso en la tabla `generaciones` (prompt + nº variantes).
+- Cuota mensual consultada antes de generar; si se supera, cae a colección
+  en silencio (sin romper la magia para el usuario).
+
+**Simulador (`SimuladorExperience.tsx`):**
+- Chips de estilo bajo el prompt.
+- Selector de **3 miniaturas "Elige tu favorita"**; la elegida se proyecta.
+
+**Panel: nueva pestaña "Métricas":**
+- Simulaciones IA del mes (vs tope), solicitudes, citas agendadas y
+  simulaciones totales — la evidencia para el pitch del producto.
+- Indicador "IA activa / no activa" y cómo encenderla.
+
+**Nuevas APIs:** `GET /api/panel/metrics`.
+
+---
+
 ## v1.6 — Panel: al ACEPTAR ahora eliges la fecha de la cita (2026-09-07)
 
 **Motivo del cambio:** al aceptar una solicitud sin fecha prefierenlada, no se

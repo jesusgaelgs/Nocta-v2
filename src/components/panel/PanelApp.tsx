@@ -48,7 +48,17 @@ interface ModalData {
   nombre: string;
 }
 
-type Tab = "solicitudes" | "agenda" | "ideas";
+type Tab = "solicitudes" | "agenda" | "ideas" | "metricas";
+
+interface Metrics {
+  generacionesMes: number;
+  generacionesTotal: number;
+  solicitudes: number;
+  citas: number;
+  ideas: number;
+  iaActiva: boolean;
+  limiteMensual: number;
+}
 
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -128,6 +138,7 @@ export function PanelApp() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [citas, setCitas] = useState<Cita[]>([]);
   const [notas, setNotas] = useState<Nota[]>([]);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [cargando, setCargando] = useState(true);
 
   const [modal, setModal] = useState<ModalData | null>(null);
@@ -155,23 +166,31 @@ export function PanelApp() {
 
   const loadAll = useCallback(async () => {
     try {
-      const [lr, cr, nr] = await Promise.all([
+      const [lr, cr, nr, mr] = await Promise.all([
         fetch("/api/panel/leads", { cache: "no-store" }),
         fetch("/api/panel/citas", { cache: "no-store" }),
         fetch("/api/panel/ideas", { cache: "no-store" }),
+        fetch("/api/panel/metrics", { cache: "no-store" }),
       ]);
-      if (lr.status === 401 || cr.status === 401 || nr.status === 401) {
+      if (
+        lr.status === 401 ||
+        cr.status === 401 ||
+        nr.status === 401 ||
+        mr.status === 401
+      ) {
         if (authed !== false) setAuthed(false);
         return;
       }
-      const [ld, cd, nd] = (await Promise.all([
+      const [ld, cd, nd, md] = (await Promise.all([
         lr.json(),
         cr.json(),
         nr.json(),
+        mr.json(),
       ])) as [
         { ok?: boolean; leads?: Lead[] },
         { ok?: boolean; citas?: Cita[] },
         { ok?: boolean; notas?: Nota[] },
+        { ok?: boolean } & Partial<Metrics>,
       ];
       /*
        * React 19 / Next 16: hacer setAuthed(true) junto a todos los set* de
@@ -186,6 +205,17 @@ export function PanelApp() {
         if (ld.ok) setLeads(ld.leads ?? []);
         if (cd.ok) setCitas(cd.citas ?? []);
         if (nd.ok) setNotas(nd.notas ?? []);
+        if (md.ok) {
+          setMetrics({
+            generacionesMes: md.generacionesMes ?? 0,
+            generacionesTotal: md.generacionesTotal ?? 0,
+            solicitudes: md.solicitudes ?? 0,
+            citas: md.citas ?? 0,
+            ideas: md.ideas ?? 0,
+            iaActiva: Boolean(md.iaActiva),
+            limiteMensual: md.limiteMensual ?? 100,
+          });
+        }
         setDbError(!ld.ok && !cd.ok && !nd.ok);
         setCargando(false);
       });
@@ -482,6 +512,7 @@ export function PanelApp() {
     { key: "solicitudes", label: "Solicitudes", count: nuevas.length },
     { key: "agenda", label: "Agenda" },
     { key: "ideas", label: "Ideas", count: pendientes },
+    { key: "metricas", label: "Métricas" },
   ];
 
   /* ---------- Login ---------- */
@@ -927,6 +958,79 @@ export function PanelApp() {
                 {notas.filter((n) => n.hecho).length} hechas · {pendientes} pendientes
               </p>
             )}
+          </section>
+        )}
+
+        {/* ---------- MÉTRICAS ---------- */}
+        {tab === "metricas" && (
+          <section className="mt-6">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-neutral-500">
+              Tu sistema de adquisición, en números
+            </p>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-5">
+                <p className="text-3xl font-bold">
+                  {metrics?.generacionesMes ?? 0}
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-widest text-neutral-500">
+                  Simulaciones IA este mes
+                </p>
+                <p className="mt-1 text-[10px] text-neutral-700">
+                  de {metrics?.limiteMensual ?? 100} del tope de seguridad
+                </p>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-5">
+                <p className="text-3xl font-bold">{metrics?.solicitudes ?? 0}</p>
+                <p className="mt-1 text-[10px] uppercase tracking-widest text-neutral-500">
+                  Solicitudes recibidas
+                </p>
+                <p className="mt-1 text-[10px] text-neutral-700">
+                  clientes que pidieron cita
+                </p>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-5">
+                <p className="text-3xl font-bold">{metrics?.citas ?? 0}</p>
+                <p className="mt-1 text-[10px] uppercase tracking-widest text-neutral-500">
+                  Citas agendadas
+                </p>
+                <p className="mt-1 text-[10px] text-neutral-700">
+                  en tu calendario
+                </p>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/60 p-5">
+                <p className="text-3xl font-bold">
+                  {metrics?.generacionesTotal ?? 0}
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-widest text-neutral-500">
+                  Simulaciones totales
+                </p>
+                <p className="mt-1 text-[10px] text-neutral-700">
+                  desde el inicio
+                </p>
+              </div>
+            </div>
+
+            <div
+              className={`mt-4 rounded-2xl border p-4 text-xs leading-relaxed ${
+                metrics?.iaActiva
+                  ? "border-emerald-400/40 bg-emerald-400/5 text-emerald-200"
+                  : "border-neutral-800 bg-neutral-950/60 text-neutral-500"
+              }`}
+            >
+              {metrics?.iaActiva
+                ? "✦ IA activa: el simulador genera diseños únicos con el prompt del cliente."
+                : "La IA no está activa todavía — el simulador usa la colección local. Agrega OPENAI_API_KEY en Vercel para encenderla."}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-neutral-900 p-4 text-[11px] leading-relaxed text-neutral-600">
+              <span className="font-semibold text-neutral-400">
+                El embudo:
+              </span>{" "}
+              simulación → solicitud → cita. Comparte este panel con tu artista
+              cuando el número de solicitudes crezca: es la evidencia de que el
+              sistema funciona.
+            </div>
           </section>
         )}
 

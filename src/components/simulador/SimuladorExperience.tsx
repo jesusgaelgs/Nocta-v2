@@ -69,8 +69,10 @@ export function SimuladorExperience() {
   const [hasPhoto, setHasPhoto] = useState(false);
   const [uploadHint, setUploadHint] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [estilo, setEstilo] = useState<string>("fine-line");
   const [generating, setGenerating] = useState(false);
   const [design, setDesign] = useState<DesignState | null>(null);
+  const [variantes, setVariantes] = useState<DesignState[]>([]);
   const [error, setError] = useState("");
   const [transform, setTransform] = useState<Transform>({
     x: 0,
@@ -204,27 +206,33 @@ export function SimuladorExperience() {
 
   /* ---------- Generación ---------- */
   const generate = useCallback(
-    async (text: string) => {
+    async (text: string, estiloElegido?: string) => {
       setGenerating(true);
       setError("");
       try {
         const resp = await fetch("/api/simulador/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: text }),
+          body: JSON.stringify({ prompt: text, estilo: estiloElegido ?? estilo }),
         });
         if (!resp.ok) throw new Error("El generador respondió con error.");
         const data = (await resp.json()) as {
-          design?: string;
-          name?: string;
+          designs?: { data: string; name: string }[];
           source?: "ia" | "colección";
         };
-        if (!data.design) throw new Error("Respuesta vacía del generador.");
-        setDesign({
-          src: data.design,
-          name: data.name || "Tu idea",
-          source: data.source === "ia" ? "ia" : "colección",
-        });
+        const lista = data.designs ?? [];
+        if (!lista.length) throw new Error("Respuesta vacía del generador.");
+        const source: "ia" | "colección" =
+          data.source === "ia" ? "ia" : "colección";
+
+        const estados: DesignState[] = lista.map((d) => ({
+          src: d.data,
+          name: d.name,
+          source,
+        }));
+        setVariantes(estados);
+        /* Si solo hay una, va directo al lienzo; si hay varias, se elige */
+        setDesign(estados[0]);
         setTransform((t) => ({ ...t, x: 0, y: 0, scale: 1, rot: 0 }));
       } catch (err) {
         setError(
@@ -234,8 +242,14 @@ export function SimuladorExperience() {
         setGenerating(false);
       }
     },
-    []
+    [estilo]
   );
+
+  /* Elige una variante de las generadas */
+  const elegirVariante = (v: DesignState) => {
+    setDesign(v);
+    setTransform((t) => ({ ...t, x: 0, y: 0, scale: 1, rot: 0 }));
+  };
 
   /* ---------- Interacción con el lienzo ---------- */
   const canvasScale = () => {
@@ -435,6 +449,31 @@ export function SimuladorExperience() {
                 placeholder="Ej: una rosa de trazo fino que envuelva el antebrazo, minimalista…"
                 className="w-full resize-none rounded-2xl border border-neutral-700 bg-neutral-900/50 p-4 text-sm leading-relaxed text-white placeholder:text-neutral-600 focus:border-white focus:outline-none"
               />
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ["fine-line", "Fine-line"],
+                    ["blackwork", "Blackwork"],
+                    ["ornamental", "Ornamental"],
+                    ["old-school", "Old school"],
+                    ["minimal", "Minimal"],
+                    ["japonesa", "Japonesa"],
+                  ] as [string, string][]
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setEstilo(val)}
+                    className={`rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest transition ${
+                      estilo === val
+                        ? "bg-white text-black"
+                        : "border border-neutral-700 text-neutral-500 hover:border-neutral-400 hover:text-neutral-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -505,6 +544,34 @@ export function SimuladorExperience() {
             </div>
 
             <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-3">
+              {variantes.length > 1 && (
+                <div className="mb-3">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-neutral-500">
+                    Elige tu favorita
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {variantes.map((v, i) => (
+                      <button
+                        key={`var-${i}`}
+                        type="button"
+                        onClick={() => elegirVariante(v)}
+                        className={`overflow-hidden rounded-xl border transition ${
+                          design?.src === v.src
+                            ? "border-white"
+                            : "border-neutral-800 opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={v.src}
+                          alt={`Variante ${i + 1}`}
+                          className="aspect-square w-full bg-white object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <canvas
                 ref={canvasRef}
                 width={900}

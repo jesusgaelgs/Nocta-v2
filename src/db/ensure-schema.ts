@@ -52,6 +52,15 @@ export async function ensureSchema(): Promise<void> {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS generaciones (
+        id serial PRIMARY KEY,
+        prompt text NOT NULL,
+        variantes int NOT NULL DEFAULT 1,
+        creado_en timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+
     done = true;
   } catch (e) {
     console.error("[ensure-schema] no se pudo asegurar el esquema:", e);
