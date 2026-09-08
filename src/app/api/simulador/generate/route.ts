@@ -51,11 +51,12 @@ async function fileToDataUrl(publicPath: string): Promise<string> {
   return `data:${mime};base64,${buf.toString("base64")}`;
 }
 
-/* ---------- OpenAI: 3 variaciones en una llamada ---------- */
-async function generateWithOpenAI(
+/* ---------- OpenAI: gpt-image-1 genera UNA imagen por llamada.
+   Hacemos 3 llamadas en paralelo para obtener las 3 variaciones. ---------- */
+async function oneOpenAIImage(
   key: string,
   promptEnriquecido: string
-): Promise<string[]> {
+): Promise<string | null> {
   const resp = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: {
@@ -65,44 +66,40 @@ async function generateWithOpenAI(
     body: JSON.stringify({
       model: "gpt-image-1",
       prompt: promptEnriquecido,
-      n: 3,
       size: "1024x1024",
       quality: "low",
-      output_format: "b64_json",
+      output_format: "png",
+      response_format: "b64_json",
     }),
     signal: AbortSignal.timeout(55000),
   });
   if (!resp.ok) {
-    /* Si n=3 falla, intentar con n=1 */
-    const single = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-image-1",
-        prompt: promptEnriquecido,
-        n: 1,
-        size: "1024x1024",
-        quality: "low",
-        output_format: "b64_json",
-      }),
-      signal: AbortSignal.timeout(55000),
-    });
-    if (!single.ok) return [];
-    const j = await single.json();
-    const b64 = j?.data?.[0]?.b64_json;
-    return typeof b64 === "string" ? [`data:image/png;base64,${b64}`] : [];
+    const text = await resp.text().catch(() => "");
+    throw new Error(`OpenAI ${resp.status}: ${text.slice(0, 300)}`);
   }
   const json = await resp.json();
-  const imgs: string[] = [];
-  for (const item of (json?.data ?? []) as { b64_json?: string }[]) {
-    if (typeof item.b64_json === "string") {
-      imgs.push(`data:image/png;base64,${item.b64_json}`);
+  const b64 = json?.data?.[0]?.b64_json;
+  return typeof b64 === "string" ? `data:image/png;base64,${b64}` : null;
+}
+
+async function generateWithOpenAI(
+  key: string,
+  promptEnriquecido: string
+): Promise<{ images: string[]; error: string | null }> {
+  /* 3 llamadas independientes: si una falla, conservamos las otras */
+  const settled = await Promise.allSettled(
+    [0, 1, 2].map(() => oneOpenAIImage(key, promptEnriquecido))
+  );
+  const images: string[] = [];
+  let error: string | null = null;
+  for (const r of settled) {
+    if (r.status === "fulfilled" && r.value) images.push(r.value);
+    else if (r.status === "rejected" && !error) {
+      error = r.reason instanceof Error ? r.reason.message : "error IA";
     }
   }
-  return imgs;
+  if (!images.length && !error) error = "Sin imágenes en la respuesta de OpenAI";
+  return { images, error: images.length ? null : error };
 }
 
 /* ---------- Replicate: 3 variaciones en paralelo ---------- */
@@ -190,16 +187,15 @@ export async function POST(req: NextRequest) {
   const enriquecido = enriquecerPrompt(prompt, estilo);
   let variantes: string[] = [];
   let source: "ia" | "colección" = "colección";
+  let iaError: string | null = null;
 
   if (await bajoCuota()) {
     /* 1) OpenAI (decisión del usuario) */
     const openaiKey = process.env.OPENAI_API_KEY;
     if (openaiKey) {
-      try {
-        variantes = await generateWithOpenAI(openaiKey, enriquecido);
-      } catch {
-        variantes = [];
-      }
+      const r = await generateWithOpenAI(openaiKey, enriquecido);
+      variantes = r.images;
+      if (!variantes.length) iaError = r.error;
       if (variantes.length) source = "ia";
     }
     /* 2) Replicate como respaldo */
@@ -234,5 +230,7 @@ export async function POST(req: NextRequest) {
     })),
     source,
     variantes: variantes.length,
+    // Diagnóstico (no expone la clave): si la IA falló, aquí va el motivo.
+    iaError,
   });
 }

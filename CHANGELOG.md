@@ -35,6 +35,15 @@ IA) se ponga al día en minutos y respete lo ya construido.
 
 **Nuevas APIs:** `GET /api/panel/metrics`.
 
+**Fix de integración OpenAI (importante):**
+- `gpt-image-1` devuelve base64 con `response_format: "b64_json"` (no con
+  `output_format`); `output_format` es el tipo de imagen (png/jpeg/webp).
+  Estaba mal enviado y la respuesta no traía imágenes → caía a colección.
+- Las 3 variaciones se generan con 3 llamadas en paralelo (`Promise.allSettled`):
+  si una falla, se conservan las otras.
+- La respuesta incluye `iaError` con el motivo si la IA falló (diagnóstico,
+  nunca expone la clave).
+
 ---
 
 ## v1.6 — Panel: al ACEPTAR ahora eliges la fecha de la cita (2026-09-07)
